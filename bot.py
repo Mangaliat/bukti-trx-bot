@@ -1,5 +1,7 @@
 import logging
 import re
+import os
+import json
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -29,7 +31,12 @@ def get_sheet(nama):
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
     client = gspread.authorize(creds)
     spreadsheet = client.open(SPREADSHEET_NAME)
     try:
@@ -39,12 +46,10 @@ def get_sheet(nama):
         return sheet
 
 def init_sheet():
-    # Sheet Pemasukan
     sheet_masuk = get_sheet("Pemasukan")
     if sheet_masuk.cell(1, 1).value != "Tanggal":
         sheet_masuk.insert_row(["Tanggal", "Waktu", "Jumlah (Rp)", "Bank", "Pengirim", "Dicatat Oleh"], 1)
 
-    # Sheet Pengeluaran
     sheet_keluar = get_sheet("Pengeluaran")
     if sheet_keluar.cell(1, 1).value != "Tanggal":
         sheet_keluar.insert_row(["Tanggal", "Waktu", "Jumlah (Rp)", "Kategori", "Keterangan", "Dicatat Oleh"], 1)
@@ -73,12 +78,14 @@ def tombol_menu():
     ]])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     await update.message.reply_text(
         "👋 Halo! Selamat datang.\nPilih menu di bawah ini:",
         reply_markup=menu_keyboard()
     )
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     await update.message.reply_text(
         "📌 Pilih menu:",
         reply_markup=menu_keyboard()
@@ -92,13 +99,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "menu":
+        context.user_data.clear()
         await query.message.reply_text("📌 Pilih menu:", reply_markup=menu_keyboard())
 
     elif query.data == "bukti_tf":
         context.user_data["mode"] = "bukti_tf"
         await query.message.reply_text(
-            "📸 *Buat Bukti TF*\n\nKirim nominal transfer:\nContoh: Rp 550.000",
-            parse_mode="Markdown"
+            "📸 *Buat Bukti TF*\n\n"
+            "Kirim nominal transfer:\nContoh: Rp 550.000\n\n"
+            "_(Kirim terus tanpa perlu kembali ke menu)_",
+            parse_mode="Markdown",
+            reply_markup=tombol_menu()
         )
 
     elif query.data == "catat_masuk":
@@ -151,7 +162,10 @@ async def handle_pesan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if mode == "bukti_tf":
         nominal = parse_nominal(teks)
         if nominal is None:
-            await update.message.reply_text("❌ Format tidak dikenali.\nContoh: Rp 550.000")
+            await update.message.reply_text(
+                "❌ Format tidak dikenali.\nContoh: Rp 550.000",
+                reply_markup=tombol_menu()
+            )
             return
         waktu = datetime.now() + timedelta(minutes=2)
         jam_str = waktu.strftime("%H:%M")
@@ -160,11 +174,11 @@ async def handle_pesan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(path_gambar, "rb") as f:
             await update.message.reply_photo(
                 photo=f,
-                caption=f"✅ *Rp {nominal}*",
+                caption=f"✅ *Rp {nominal}*\n\nKirim nominal berikutnya atau tekan menu utama.",
                 parse_mode="Markdown",
                 reply_markup=tombol_menu()
             )
-        context.user_data["mode"] = None
+        # mode tetap "bukti_tf" — langsung bisa input nominal berikutnya
 
     # ---- CATAT PEMASUKAN ----
     elif mode == "catat_masuk":
@@ -270,24 +284,20 @@ async def handle_pesan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =============================================
 async def tampilkan_rekap(message):
     try:
-        # Pemasukan
         sheet_masuk = get_sheet("Pemasukan")
         data_masuk = sheet_masuk.get_all_records()
         total_masuk = sum(int(r["Jumlah (Rp)"]) for r in data_masuk if str(r["Jumlah (Rp)"]).isdigit())
 
-        # Pengeluaran
         sheet_keluar = get_sheet("Pengeluaran")
         data_keluar = sheet_keluar.get_all_records()
         total_keluar = sum(int(r["Jumlah (Rp)"]) for r in data_keluar if str(r["Jumlah (Rp)"]).isdigit())
 
         saldo = total_masuk - total_keluar
 
-        # 3 pemasukan terakhir
         detail_masuk = ""
         for r in reversed(data_masuk[-3:]):
             detail_masuk += f"  • {r['Tanggal']} | Rp{int(r['Jumlah (Rp)']):,} | {r['Pengirim']}\n"
 
-        # 3 pengeluaran terakhir
         detail_keluar = ""
         for r in reversed(data_keluar[-3:]):
             detail_keluar += f"  • {r['Tanggal']} | Rp{int(r['Jumlah (Rp)']):,} | {r['Keterangan']}\n"
