@@ -13,7 +13,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # =============================================
-BOT_TOKEN = "8991685406:AAEJpyiHlxStNlCcP0kA4IWmFngHCYEZZGU"
+BOT_TOKEN = "8991685406:AAGBnvBQIwTvhiHwr4iad4o0pm8hJHZiieE"
 SPREADSHEET_NAME = "Bukti Transaksi"
 CREDENTIALS_FILE = "credentials.json"
 # =============================================
